@@ -184,8 +184,8 @@ rails_branch = "2-3-stable" if rails_branch.nil?
 database = template_options["database"].nil? ? ask("Which database? postgresql (default), mysql, sqlite").downcase : template_options["database"]
 database = "postgresql" if database.nil?
 
-exception_handling = template_options["exception_handling"].nil? ? ask("Which exception reporting? exceptional (default), hoptoad").downcase : template_options["exception_handling"]
-exception_handling = "exceptional" if exception_handling.nil?
+exception_handling = template_options["exception_handling"].nil? ? ask("Which exception reporting? exception_notifier (default), exceptional, hoptoad").downcase : template_options["exception_handling"]
+exception_handling = "exception_notifier" if exception_handling.nil?
 
 monitoring = template_options["monitoring"].nil? ? ask("Which monitoring? new_relic (default), scout").downcase : template_options["monitoring"]
 monitoring = "new_relic" if monitoring.nil?
@@ -220,6 +220,7 @@ exceptional_api_key = template_options["exceptional_api_key"]
 hoptoad_api_key = template_options["hoptoad_api_key"]
 newrelic_api_key = template_options["newrelic_api_key"]
 notifier_email_from = template_options["notifier_email_from"]
+notifier_email_to = template_options["notifier_email_to"]
 default_url_options_host = template_options["default_url_options_host"]
 
 def install_plugin (name, options)
@@ -282,7 +283,10 @@ commit_state "base application"
 plugins = 
   {
     'admin_data' => {:options => {:git => 'git://github.com/neerajdotname/admin_data.git'}},
+    'custom_err_message' => {:options => {:git => 'git://github.com/gumayunov/custom-err-msg.git'}},
     'db_populate' => {:options => {:git => 'git://github.com/ffmike/db-populate.git'}},
+    'exception_notifier' => {:options => {:git => 'git://github.com/rails/exception_notification.git'},
+                             :if => 'exception_handling == "exception_notifier"'},
     'exceptional' => {:options => {:git => 'git://github.com/contrast/exceptional.git'},
                       :if => 'exception_handling == "exceptional"'},
     'fast_remote_cache' => {:options => {:git => 'git://github.com/37signals/fast_remote_cache.git'}},
@@ -292,18 +296,18 @@ plugins =
     'live_validations' => {:options => {:git => 'git://github.com/augustl/live-validations.git'}},
     'new_relic' => {:options => {:git => 'git://github.com/newrelic/rpm.git'},
                     :if => 'monitoring == "new_relic"'},
-    'object_daddy' => {:options => {:git => 'git://github.com/flogic/object_daddy.git'}},
+    #'object_daddy' => {:options => {:git => 'git://github.com/flogic/object_daddy.git'}},
     'paperclip' => {:options => {:git => 'git://github.com/thoughtbot/paperclip.git'}},
-    'parallel_specs' => {:options => {:git => 'git://github.com/grosser/parallel_specs.git'}},
-    'rack-bug' => {:options => {:git => 'git://github.com/brynary/rack-bug.git'}},
+    #'parallel_specs' => {:options => {:git => 'git://github.com/grosser/parallel_specs.git'}},
+    #'rack-bug' => {:options => {:git => 'git://github.com/brynary/rack-bug.git'}}, 
     'rubaidhstrano' => {:options => {:git => 'git://github.com/rubaidh/rubaidhstrano.git'}},
     'scout_rails_instrumentation' => {:options => {:git => 'git://github.com/highgroove/scout_rails_instrumentation.git'},
                                       :if => 'monitoring == "scout"'},
-    'shmacros' => {:options => {:git => 'git://github.com/maxim/shmacros.git'}},
+    #'shmacros' => {:options => {:git => 'git://github.com/maxim/shmacros.git'}},
     'stringex' => {:options => {:git => 'git://github.com/rsl/stringex.git'}},
     'superdeploy' => {:options => {:git => 'git://github.com/saizai/superdeploy.git'}},
-    'time-warp' => {:options => {:git => 'git://github.com/iridesco/time-warp.git'}},    
-    'validation_reflection' => {:options => {:git => 'git://github.com/redinger/validation_reflection.git'}}    
+    'time-warp' => {:options => {:git => 'git://github.com/iridesco/time-warp.git'}}
+    #'validation_reflection' => {:options => {:git => 'git://github.com/redinger/validation_reflection.git'}}    
   }
   
 plugins.each do |name, value|
@@ -346,6 +350,20 @@ gem "ffmike-test_benchmark",
   :lib => 'test_benchmark', 
   :source => 'http://gems.github.com',
   :env => 'test'
+gem "rspec", 
+  :lib => false, 
+  :version => ">= 1.2.0"
+gem "rspec-rails", 
+  :lib => false, 
+  :version => ">= 1.2.0"
+gem "thoughtbot-factory_girl", 
+  :lib => "factory_girl", 
+  :source => "http://gems.github.com",
+  :env => 'test'
+gem "carlosbrando-remarkable", 
+  :lib => "remarkable", 
+  :source => "http://gems.github.com",
+  :env => 'test'
 gem "webrat",
   :env => "test"
 
@@ -354,14 +372,21 @@ gem "webrat",
 
 commit_state "Added plugins and gems"
 
+# setup rspec
+in_root do
+  run 'script/generate rspec'
+end
+
+commit_state "RSpec files generated"
+
 # environment updates
 in_root do
   run 'cp config/environments/production.rb config/environments/staging.rb'
 end
-environment 'config.middleware.use "Rack::Bug"', :env => 'development'
-environment 'config.middleware.use "Rack::Bug"', :env => 'staging'
-
-commit_state "Set up staging environment and hooked up Rack::Bug"
+# environment 'config.middleware.use "Rack::Bug"', :env => 'development'
+# environment 'config.middleware.use "Rack::Bug"', :env => 'staging'
+# 
+# commit_state "Set up staging environment and hooked up Rack::Bug"
 
 # make sure HAML files get searched if we go that route
 file '.ackrc', <<-END
@@ -708,6 +733,12 @@ initializer 'requires.rb', <<-END
 Dir[File.join(RAILS_ROOT, 'lib', '*.rb')].each do |f|
   require f
 end
+END
+
+initializer 'notifications.rb', <<-END
+ExceptionNotifier.exception_recipients = %w(#{notifier_email_to})
+ExceptionNotifier.sender_address = %(#{notifier_email_from})
+ExceptionNotifier.email_prefix = "[#{current_app_name.capitalize} in \#{RAILS_ENV.capitalize} mode] "
 END
 
 initializer 'admin_data.rb', <<-END
@@ -1272,1067 +1303,11 @@ class Company < ActiveRecord::Base
 end
 END
 
-file 'test/test_helper.rb', <<-END
-ENV["RAILS_ENV"] = "test" if ENV["RAILS_ENV"].nil? || ENV["RAILS_ENV"] == ''
-require File.expand_path(File.dirname(__FILE__) + "/../config/environment")
-require 'test_help'
-require 'shoulda'
-require 'mocha'
-require 'authlogic/test_case'
-require 'webrat'
-
-Webrat.configure do |config|
-  config.mode = :rails
-  config.open_error_files = false
-end
-
-# show less output on test benchmarks
-# use (0,0) to suppress benchmark output entirely
-Test::Unit::UI::Console::TestRunner.set_test_benchmark_limits(1,5)
-
-# skip after_create callback during testing
-class User < ActiveRecord::Base; def send_welcome_email; end; end
-
-class ActiveSupport::TestCase
-  
-  self.use_transactional_fixtures = true
-  self.use_instantiated_fixtures  = false
-
-  # Setup all fixtures in test/fixtures/*.(yml|csv) for all tests in alphabetical order.
-  #
-  # Note: You'll currently still have to declare fixtures explicitly in integration tests
-  # -- they do not yet inherit this setting
-  #fixtures :all
-
-  # Add more helper methods to be used by all tests here...
-end
-
-class ActionController::TestCase
-  setup :activate_authlogic
-end
-END
-
-file 'test/unit/notifier_test.rb', <<-END
-require 'test_helper'
-
-class NotifierTest < ActionMailer::TestCase
-  
-  should "send welcome email" do
-    user = User.generate!
-    Notifier.deliver_welcome_email(user)
-    assert_sent_email do |email|
-      email.subject = "Welcome to #{current_app_name}!"
-      email.from.include?('#{notifier_email_from}')
-      email.to.include?(user.email)
-      email.body =~ Regexp.new(user.login)
-    end
-  end
-
-  should "send password reset instructions" do
-    user = User.generate!
-    Notifier.deliver_password_reset_instructions(user)
-    assert_sent_email do |email|
-      email.subject = "Password Reset Instructions"
-      email.from.include?('#{notifier_email_from}')
-      email.to.include?(user.email)
-      email.body =~ Regexp.new(user.perishable_token)
-    end
-  end
-  
-end
-END
-
-file 'test/unit/user_test.rb', <<-END
-require 'test_helper'
-
-class UserTest < ActiveSupport::TestCase
-
-  context "using authlogic" do
-    setup do
-      activate_authlogic
-    end
-  
-    should_be_authentic
-  
-    context "serialize roles" do
-      setup do
-        @user = User.generate
-      end
-    
-      should "default to an empty array" do
-        assert_equal [], @user.roles
-      end
-    
-      should "allow saving and retrieving roles array" do
-        @user.roles = ["soldier", "sailor", "spy"]
-        @user.save
-        user_id = @user.id
-        user2 = User.find(user_id)
-        assert_equal ["soldier", "sailor", "spy"], user2.roles
-      end
-    
-      should "not allow non-array data" do
-        assert_raise ActiveRecord::SerializationTypeMismatch do
-          @user.roles = "snakeskin shoes"
-          @user.save
-        end
-      end
-    end
-  
-    should_callback :make_default_roles, :before_validation_on_create
-    should_callback :send_welcome_email, :after_create
-  
-    should_allow_mass_assignment_of :login, :password, :password_confirmation, :first_name, :last_name, :email
-    should_not_allow_mass_assignment_of :crypted_password, :password_salt, :persistence_token, :login_count, :last_request_at, :last_login_at,
-      :current_login_at, :last_login_ip, :current_login_ip, :roles, :created_at, :updated_at, :id
-  
-    context "#deliver_password_reset_instructions!" do
-      setup do
-        @user = User.generate!
-        Notifier.stubs(:deliver_password_reset_instructions)
-      end
-    
-      should "reset the perishable token" do
-        @user.expects(:reset_perishable_token!)
-        @user.deliver_password_reset_instructions!
-      end
-    
-      should "send the reset mail" do
-        Notifier.expects(:deliver_password_reset_instructions).with(@user)
-        @user.deliver_password_reset_instructions!
-      end
-    end
-  
-    context "#admin?" do
-      setup do
-        @user = User.generate
-      end
-    
-      should "return true if the user has the admin role" do
-        @user.add_role("admin")
-        assert @user.admin?
-      end
-    
-      should "return false if the user does not have the admin role" do
-        @user.clear_roles
-        assert !@user.admin?
-      end
-    end
-  
-    context "#has_role?" do
-      setup do
-        @user = User.generate
-      end
-    
-      should "return true if the user has the specified role" do
-        @user.add_role("saint")
-        assert @user.has_role?("saint")
-      end
-    
-      should "return false if the user does not have the specified role" do
-        @user.clear_roles
-        assert !@user.has_role?("saint")
-      end
-    end
-
-    context "#add_role" do
-      should "add the specified role" do
-        @user = User.generate
-        @user.add_role("wombat")
-        assert @user.roles.include?("wombat")
-      end
-    end
-  
-    context "#remove_role" do
-      should "remove the specified role" do
-        @user = User.generate
-        @user.add_role("omnivore")
-        @user.remove_role("omnivore")
-        assert !@user.roles.include?("omnivore")
-      end
-    end
-  
-    context "#clear_roles" do
-      should "have no roles after clearing" do
-        @user = User.generate
-        @user.add_role("cat")
-        @user.add_role("dog")
-        @user.add_role("goldfish")
-        @user.clear_roles
-        assert_equal [], @user.roles
-      end
-    end
-  
-    context "#kaboom!" do
-      should "blow up predictably" do
-        assert_raise NameError do
-          @user = User.generate!
-          @user.kaboom!
-        end
-      end
-    end
-  end 
-end
-END
-
-file 'test/shoulda_macros/authlogic.rb', <<-END
-module Authlogic
-  module ShouldaMacros
-    class Test::Unit::TestCase
-      def self.should_be_authentic
-        klass = described_type
-        should "acts as authentic" do
-          assert klass.new.respond_to?(:password=)
-          assert klass.new.respond_to?(:valid_password?)
-        end
-      end
-    end
-  end
-end
-END
-
-file 'test/shoulda_macros/filter.rb', <<-END
-class ActionController::TestCase
-  def self.should_have_before_filter(expected_method, options = {})
-    should_have_filter('before', expected_method, options)
-  end
-
-  def self.should_have_after_filter(expected_method, options = {})
-    should_have_filter('after', expected_method, options)
-  end
-
-  def self.should_have_filter(filter_type, expected_method, options)
-    description = "have \#{filter_type}_filter :\#{expected_method}"
-    description << " with \#{options.inspect}" unless options.empty?
-
-    should description do
-      klass = "action_controller/filters/\#{filter_type}_filter".classify.constantize
-      expected = klass.new(:filter, expected_method.to_sym, options)
-      assert_equal 1, @controller.class.filter_chain.select { |filter|
-        filter.method == expected.method && filter.kind == expected.kind &&
-        filter.options == expected.options && filter.class == expected.class
-      }.size
-    end
-  end
-end
-END
-
-file 'test/exemplars/user_exemplar.rb', <<-END
-class User < ActiveRecord::Base
-  generator_for :login, :method => :next_login
-  generator_for :password => 'bobby'
-  generator_for :password_confirmation => 'bobby'
-  generator_for :email, :method => :next_email
-  
-  def self.next_login
-    @last_login ||= 'bobby'
-    @last_login.succ!
-  end
-  
-  def self.next_email
-    @base ||= 'BobDobbs'
-    @base.succ!
-    "\#{@base}@example.com"
-  end
-  
-end
-END
-
-file 'test/unit/user_session_test.rb', <<-END
-require 'test_helper'
-
-class UserSessionTest < ActiveSupport::TestCase
-  # note - not an AR class
-  
-  should "derive from Authlogic::Session::Base" do
-    Authlogic::Session::Base.controller = stub('controller')
-    us = UserSession.new
-    assert us.is_a?(Authlogic::Session::Base)
-  end
-  
-end
-END
-
-file 'test/unit/helpers/application_helper_test.rb', <<-END
-require 'test_helper'
-
-class ApplicationHelperTest < ActionView::TestCase
-  
-  context "#anonymous_only" do
-    should "call the supplied block if the current user is anonymous" do
-      self.stubs(:logged_in?).returns(false)
-      assert_equal "result", anonymous_only {"result"}
-    end
-
-    should "not call the supplied block if the current user is logged in" do
-      self.stubs(:logged_in?).returns(true)
-      assert_nil anonymous_only {"result"}
-    end
-  end
-  
-  context "#authenticated_only" do
-    should "call the supplied block if the current user is logged in" do
-      self.stubs(:logged_in?).returns(true)
-      assert_equal "result", authenticated_only {"result"}
-    end
-
-    should "not call the supplied block if the current user is anonymous" do
-      self.stubs(:logged_in?).returns(false)
-      assert_nil authenticated_only {"result"}
-    end
-  end
-  
-  context "#admin_only" do
-    setup do
-      @current_user = User.generate
-    end
-    
-    should "call the supplied block if the current user is logged in and an admin" do
-      @current_user.add_role("admin")
-      self.stubs(:current_user).returns(@current_user)
-      assert_equal "result", admin_only {"result"}
-    end
-
-    should "not call the supplied block if the current user is anonymous" do
-      self.stubs(:current_user).returns(nil)
-      assert_nil admin_only {"result"}
-    end
-
-    should "not call the supplied block if the current user is logged in but not an admin" do
-      self.stubs(:current_user).returns(@current_user)
-      assert_nil admin_only {"result"}
-    end
-  end
-  
-  should "provide an array of U.S. states" do
-    assert_equal [[ "Alabama", "AL" ], [ "Alaska", "AK" ], [ "Arizona", "AZ" ], [ "Arkansas", "AR" ], [ "California", "CA" ], [ "Colorado", "CO" ], [ "Connecticut", "CT" ], [ "Delaware", "DE" ], [ "District Of Columbia", "DC" ], [ "Florida", "FL" ], [ "Georgia", "GA" ], [ "Hawaii", "HI" ], [ "Idaho", "ID" ], [ "Illinois", "IL" ], [ "Indiana", "IN" ], [ "Iowa", "IA" ], [ "Kansas", "KS" ], [ "Kentucky", "KY" ], [ "Louisiana", "LA" ], [ "Maine", "ME" ], [ "Maryland", "MD" ], [ "Massachusetts", "MA" ], [ "Michigan", "MI" ], [ "Minnesota", "MN" ], [ "Mississippi", "MS" ], [ "Missouri", "MO" ], [ "Montana", "MT" ], [ "Nebraska", "NE" ], [ "Nevada", "NV" ], [ "New Hampshire", "NH" ], [ "New Jersey", "NJ" ], [ "New Mexico", "NM" ], [ "New York", "NY" ], [ "North Carolina", "NC" ], [ "North Dakota", "ND" ], [ "Ohio", "OH" ], [ "Oklahoma", "OK" ], [ "Oregon", "OR" ], [ "Pennsylvania", "PA" ], [ "Rhode Island", "RI" ], [ "South Carolina", "SC" ], [ "South Dakota", "SD" ], [ "Tennessee", "TN" ], [ "Texas", "TX" ], [ "Utah", "UT" ], [ "Vermont", "VT" ], [ "Virginia", "VA" ], [ "Washington", "WA" ], [ "West Virginia", "WV" ], [ "Wisconsin", "WI" ], [ "Wyoming", "WY" ]], state_options
-  end
-  
-  should "provide an array of U.S. states plus blank" do
-    assert_equal [["the label", ""], [ "Alabama", "AL" ], [ "Alaska", "AK" ], [ "Arizona", "AZ" ], [ "Arkansas", "AR" ], [ "California", "CA" ], [ "Colorado", "CO" ], [ "Connecticut", "CT" ], [ "Delaware", "DE" ], [ "District Of Columbia", "DC" ], [ "Florida", "FL" ], [ "Georgia", "GA" ], [ "Hawaii", "HI" ], [ "Idaho", "ID" ], [ "Illinois", "IL" ], [ "Indiana", "IN" ], [ "Iowa", "IA" ], [ "Kansas", "KS" ], [ "Kentucky", "KY" ], [ "Louisiana", "LA" ], [ "Maine", "ME" ], [ "Maryland", "MD" ], [ "Massachusetts", "MA" ], [ "Michigan", "MI" ], [ "Minnesota", "MN" ], [ "Mississippi", "MS" ], [ "Missouri", "MO" ], [ "Montana", "MT" ], [ "Nebraska", "NE" ], [ "Nevada", "NV" ], [ "New Hampshire", "NH" ], [ "New Jersey", "NJ" ], [ "New Mexico", "NM" ], [ "New York", "NY" ], [ "North Carolina", "NC" ], [ "North Dakota", "ND" ], [ "Ohio", "OH" ], [ "Oklahoma", "OK" ], [ "Oregon", "OR" ], [ "Pennsylvania", "PA" ], [ "Rhode Island", "RI" ], [ "South Carolina", "SC" ], [ "South Dakota", "SD" ], [ "Tennessee", "TN" ], [ "Texas", "TX" ], [ "Utah", "UT" ], [ "Vermont", "VT" ], [ "Virginia", "VA" ], [ "Washington", "WA" ], [ "West Virginia", "WV" ], [ "Wisconsin", "WI" ], [ "Wyoming", "WY" ]], state_options_with_blank("the label")
-  end
-  
-  context "#full_state_name" do
-    should "look up a state name" do
-      assert_equal "North Carolina", full_state_name("NC")
-    end
-    
-    should "return nil if no match" do
-      assert_nil full_state_name("XX")
-    end
-  end
-end
-END
-
-file 'test/functional/accounts_controller_test.rb', <<-END
-require 'test_helper'
-
-class AccountsControllerTest < ActionController::TestCase
-  
-  should_have_before_filter :require_no_user, :only => [:new, :create]
-  should_have_before_filter :require_user, :only => [:show, :edit, :update]
-  
-  context "routing" do
-    should_route :get, "/account/new", :controller => "accounts", :action => "new"
-    should_route :get, "/account/edit", :action=>"edit", :controller=>"accounts"
-    should_route :get, "/account", :action=>"show", :controller=>"accounts"
-    should_route :put, "/account", :action=>"update", :controller=>"accounts"
-    should_route :post, "/account", :action=>"create", :controller=>"accounts"
-    # TODO: Figure out what to do about this
-    # should_route :get, "/register", :action=>"new", :controller=>"accounts"
-    
-    context "named routes" do
-      setup do
-        get :show
-      end
-      
-      should "generate account_path" do
-        assert_equal "/account", account_path
-      end
-      should "generate new_account_path" do
-        assert_equal "/account/new", new_account_path
-      end
-      should "generate edit_account_path" do
-        assert_equal "/account/edit", edit_account_path
-      end
-      should "generate register_path" do
-        assert_equal "/register", register_path
-      end
-    end
-  end
-    
-  context "on GET to :new" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @the_user = User.generate!
-      User.stubs(:new).returns(@the_user)
-      get :new
-    end
-    
-    should_assign_to(:user) { @the_user }
-    should_assign_to(:page_title) { "Create Account" }
-    should_respond_with :success
-    should_render_template "users/new"
-    should_not_set_the_flash
-  end
-
-  context "on POST to :create" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @the_user = User.generate!
-      User.stubs(:new).returns(@the_user)
-    end
-    
-    context "with successful creation" do
-      setup do
-        @the_user.stubs(:save).returns(true)
-        post :create, :user => { :login => "bobby", :password => "bobby", :password_confirmation => "bobby" }
-      end
-
-      should_assign_to(:user) { @the_user }
-      should_respond_with :redirect
-      should_set_the_flash_to "Account registered!"
-      should_redirect_to("the root url") { root_url }
-    end
-    
-    context "with failed creation" do
-      setup do
-        @the_user.stubs(:save).returns(false)
-        post :create, :user => { :login => "bobby", :password => "bobby", :password_confirmation => "bobby" }
-      end
-      
-      should_assign_to(:user) { @the_user }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template "users/new"
-    end
-  end
-  
-  context "with a regular user" do
-    setup do
-      @the_user = User.generate!
-      UserSession.create(@the_user)
-    end
-
-    context "on GET to :show" do
-      setup do
-        get :show
-      end
-    
-      should_assign_to(:user) { @the_user }
-      should_assign_to(:page_title) { "\#{@the_user.login} details" }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template "users/show"
-    end
-
-    context "on GET to :edit" do
-      setup do
-        get :edit
-      end
-    
-      should_assign_to(:user) { @the_user }
-      should_assign_to(:page_title) { "Edit \#{@the_user.login}" }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template "users/edit"
-    end
-
-    context "on PUT to :update" do
-      context "with successful update" do
-        setup do
-          User.any_instance.stubs(:update_attributes).returns(true)
-          put :update, :user => {:login => "bill" }
-        end
-      
-        should_assign_to(:user) { @the_user }
-        should_respond_with :redirect
-        should_set_the_flash_to "Account updated!"
-        should_redirect_to("the user's account") { account_url }
-      end
-    
-      context "with failed update" do
-        setup do
-          User.any_instance.stubs(:update_attributes).returns(false)
-          put :update, :user => {:login => "bill" }
-        end
-      
-        should_assign_to(:user) { @the_user }
-        should_respond_with :success
-        should_not_set_the_flash
-        should_render_template "users/edit"
-      end
-    end
-  end
-end
-END
-
-file 'test/functional/application_controller_test.rb', <<-END
-require 'test_helper'
-
-class ApplicationControllerTest < ActionController::TestCase
-  
-  # should_helper :all
-  # should_have_helper_method :logged_in?, :admin_logged_in?, :current_user_session, :current_user
-  # should_protect_from_forgery
-
-  should_filter_params :password, :confirm_password, :password_confirmation, :creditcard
-  
-  context "#logged_in?" do
-    should "return true if there is a user session" do
-      @the_user = User.generate!
-      UserSession.create(@the_user)
-      assert controller.logged_in?
-    end
-    
-    should "return false if there is no session" do
-      assert !controller.logged_in?
-    end
-  end
-  
-  context "#admin_logged_in?" do
-    should "return true if there is a user session for an admin" do
-      @the_user = User.generate!
-      @the_user.roles << "admin"
-      UserSession.create(@the_user)
-      assert controller.admin_logged_in?
-    end
-    
-    should "return false if there is a user session for a non-admin" do
-      @the_user = User.generate!
-      @the_user.roles = []
-      UserSession.create(@the_user)
-      assert !controller.admin_logged_in?
-    end
-    
-    should "return false if there is no session" do
-      assert !controller.admin_logged_in?
-    end
-  end
-  
-  # TODO: Test filter methods
-end
-END
-
-file 'test/functional/users_controller_test.rb', <<-END
-require 'test_helper'
-
-class UsersControllerTest < ActionController::TestCase
-  
-  should_have_before_filter :require_no_user, :only => [:new, :create]
-  should_have_before_filter :require_user, :only => [:show, :edit, :update]
-  should_have_before_filter :admin_required, :only => [:index, :destroy]
-  
-  
-  context "routing" do
-    should_route :get, "/users", :action=>"index", :controller=>"users"
-    should_route :post, "/users", :action=>"create", :controller=>"users"
-    should_route :get, "/users/new", :action=>"new", :controller=>"users"
-    should_route :get, "/users/1/edit", :action=>"edit", :controller=>"users", :id => 1
-    should_route :get, "/users/1", :action=>"show", :controller=>"users", :id => 1
-    should_route :put, "/users/1", :action=>"update", :controller=>"users", :id => 1
-    should_route :delete, "/users/1", :action=>"destroy", :controller=>"users", :id => 1
-    
-    context "named routes" do
-      setup do
-        get :index
-      end
-      
-      should "generate users_path" do
-        assert_equal "/users", users_path
-      end
-      should "generate user_path" do
-        assert_equal "/users/1", user_path(1)
-      end
-      should "generate new_user_path" do
-        assert_equal "/users/new", new_user_path
-      end
-      should "generate edit_user_path" do
-        assert_equal "/users/1/edit", edit_user_path(1)
-      end
-    end
-  end
-    
-  context "on GET to :index" do
-    setup do
-      controller.stubs(:admin_required).returns(true)
-      @the_user = User.generate!
-      User.stubs(:all).returns([@the_user])
-      get :index
-    end
-    
-    should_assign_to(:users) { [@the_user] }
-    should_assign_to(:page_title) { "All Users" }
-    should_respond_with :success
-    should_render_template :index
-    should_not_set_the_flash
-  end
-   
-  context "on GET to :new" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @the_user = User.generate!
-      User.stubs(:new).returns(@the_user)
-      get :new
-    end
-    
-    should_assign_to(:user) { @the_user }
-    should_assign_to(:page_title) { "Create Account" }
-    should_respond_with :success
-    should_render_template :new
-    should_not_set_the_flash
-  end
-
-  context "on POST to :create" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @the_user = User.generate!
-      User.stubs(:new).returns(@the_user)
-    end
-    
-    context "with successful creation" do
-      setup do
-        @the_user.stubs(:save).returns(true)
-        post :create, :user => { :login => "bobby", :password => "bobby", :password_confirmation => "bobby" }
-      end
-
-      should_assign_to(:user) { @the_user }
-      should_respond_with :redirect
-      should_set_the_flash_to "Account registered!"
-      should_redirect_to("the root url") { root_url }
-    end
-    
-    context "with failed creation" do
-      setup do
-        @the_user.stubs(:save).returns(false)
-        post :create, :user => { :login => "bobby", :password => "bobby", :password_confirmation => "bobby" }
-      end
-      
-      should_assign_to(:user) { @the_user }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template :new
-    end
-  end
-  
-  context "with a regular user" do
-    # TODO: insert checks that user can only get to their own stuff, even with spoofed URLs
-  end
-  
-  context "with an admin user" do
-    setup do
-      @admin_user = User.generate!
-      @admin_user.roles << "admin"
-      UserSession.create(@admin_user)
-      @the_user = User.generate!
-    end
-
-    context "on GET to :show" do
-      setup do
-        get :show, :id => @the_user.id
-      end
-    
-      should_assign_to(:user) { @the_user }
-      should_assign_to(:page_title) { "\#{@the_user.login} details" }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template :show
-    end
-
-    context "on GET to :edit" do
-      setup do
-        get :edit, :id => @the_user.id
-      end
-    
-      should_assign_to(:user) { @the_user }
-      should_assign_to(:page_title) { "Edit \#{@the_user.login}" }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template :edit
-    end
-
-    context "on PUT to :update" do
-      context "with successful update" do
-        setup do
-          User.any_instance.stubs(:update_attributes).returns(true)
-          put :update, :id => @the_user.id, :user => { :login => "bill" }
-        end
-      
-        should_assign_to(:user) { @the_user }
-        should_respond_with :redirect
-        should_set_the_flash_to "Account updated!"
-        should_redirect_to("the user's account") { account_url }
-      end
-    
-      context "with failed update" do
-        setup do
-          User.any_instance.stubs(:update_attributes).returns(false)
-          put :update, :id => @the_user.id, :user => { :login => "bill" }
-        end
-      
-        should_assign_to(:user) { @the_user }
-        should_respond_with :success
-        should_not_set_the_flash
-        should_render_template :edit
-      end
-    end
-    
-    context "on DELETE to :destroy" do
-      setup do
-        delete :destroy, :id => @the_user.id
-      end
-
-      should_respond_with :redirect
-      should_set_the_flash_to "User was deleted."
-      should_redirect_to("the users page") { users_path }
-    end
-  end
-end
-END
-
-file 'test/functional/user_sessions_controller_test.rb', <<-END
-require 'test_helper'
-
-class UserSessionsControllerTest < ActionController::TestCase
-  should_have_before_filter :require_no_user, :only => [:new, :create]
-  should_have_before_filter :require_user, :only => :destroy
-
-  context "routing" do
-    should_route :get, "/account/new", :controller => "accounts", :action => "new"
-    should_route :post, "/account", :action=>"create", :controller=>"accounts"
-    should_route :delete, "/user_session", :action=>"destroy", :controller=>"user_sessions"
-    # TODO: Figure out what to do about these
-    # should_route :get, "/login", :action=>"new", :controller=>"user_sessions"
-    # should_route :get, "/logout", :action=>"destroy", :controller=>"user_sessions"
-    
-    context "named routes" do
-      setup do
-        get :new
-      end
-      
-      should "generate user_session_path" do
-        assert_equal "/user_session", user_session_path
-      end
-      should "generate new_user_session_path" do
-        assert_equal "/user_session/new", new_user_session_path
-      end
-      should "generate login_path" do
-        assert_equal "/login", login_path
-      end
-      should "generate logout_path" do
-        assert_equal "/logout", logout_path
-      end
-    end
-  end
-
-  context "on GET to :new" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @the_user_session = UserSession.new
-      UserSession.stubs(:new).returns(@the_user_session)
-      get :new
-    end
-    
-    should_assign_to(:user_session) { @the_user_session }
-    should_assign_to(:page_title) { "Login" }
-    should_respond_with :success
-    should_render_template :new
-    should_not_set_the_flash
-  end
-
-  context "on POST to :create" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @the_user_session = UserSession.new
-      UserSession.stubs(:new).returns(@the_user_session)
-    end
-    
-    context "with successful creation" do
-      setup do
-        @the_user_session.stubs(:save).returns(true)
-        post :create, :user_session => { :login => "bobby", :password => "bobby" }
-      end
-
-      should_assign_to(:user_session) { @the_user_session }
-      should_respond_with :redirect
-      should_set_the_flash_to "Login successful!"
-      should_redirect_to("the root url") { root_url }
-    end
-    
-    context "with failed creation" do
-      setup do
-        @the_user_session.stubs(:save).returns(false)
-        post :create, :user_session => { :login => "bobby", :password => "bobby" }
-      end
-      
-      should_assign_to(:user_session) { @the_user_session }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template :new
-    end
-  end
-  
-  context "on DELETE to :destroy" do
-    setup do
-      @the_user = User.generate!
-      UserSession.create(@the_user)
-      delete :destroy
-    end
-    
-    should_respond_with :redirect
-    should_set_the_flash_to "Logout successful!"
-    should_redirect_to("the login page") { new_user_session_url }
-  end
-  
-end
-END
+#TODO: IMPLEMENT RSPEC TESTS TO REMOVE THE SHOULDA ONES I'VE REMOVED
 
 if ie6_blocking == 'light'
   upgrade_test = ", :upgrade => 'Your Browser is Obsolete'"
 end
-
-file 'test/functional/pages_controller_test.rb', <<-END
-require 'test_helper'
-
-class PagesControllerTest < ActionController::TestCase
-
-  context "routing" do
-    should_route :get, "/", :action=>"home", :controller=>"pages"
-    should_route :get, "/pages/foo", :controller=>"pages", :action => "foo"
-    
-    context "named routes" do
-      setup do
-        get :home
-      end
-      
-      should "generate root_path" do
-        assert_equal "/", root_path
-      end
-    end
-  end
-  
-  {:home => '#{current_app_name}',
-   :css_test => 'CSS Test'#{upgrade_test}}.each do | page, page_title |
-    context "on GET to :\#{page.to_s}" do
-      setup do
-        get page
-      end
-    
-      should_assign_to(:page_title) { page_title }
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template page
-    end
-  end
-  
-  context "on GET to :kaboom" do
-    should "blow up predictably" do
-      assert_raise NameError do
-        @user = User.generate!
-        get :kaboom
-      end
-    end
-  end
-  
-end
-END
-
-file 'test/functional/password_reset_controller_tests.rb', <<-END
-require 'test_helper'
-
-class PasswordResetsControllerTest < ActionController::TestCase
-
-  should_have_before_filter :load_user_using_perishable_token, :only => [:edit, :update]
-  
-  context "routing" do
-    should_route :post, "/password_resets", :action=>"create", :controller=>"password_resets"
-    should_route :get, "/password_resets/new", :action=>"new", :controller=>"password_resets"
-    should_route :get, "/password_resets/1/edit", :action=>"edit", :controller=>"password_resets", :id => 1
-    should_route :put, "/password_resets/1", :action=>"update", :controller=>"password_resets", :id => 1
-    
-    context "named routes" do
-      setup do
-        get :new
-      end
-      
-      should "generate new_password_reset_path" do
-        assert_equal "/password_resets/new", new_password_reset_path
-      end
-      should "generate edit_password_reset_path" do
-        assert_equal "/password_resets/1/edit", edit_password_reset_path(1)
-      end
-      should "generate password_reset_path" do
-        assert_equal "/password_resets/1", password_reset_path(1)
-      end
-    end
-  end
-    
-  context "on GET to :new" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      get :new
-    end
-    
-    should_assign_to(:page_title) { "Forgot Password?" }
-    should_respond_with :success
-    should_render_template :new
-    should_not_set_the_flash
-  end
-
-  context "on POST to :create" do
-    setup do
-      Notifier.stubs(:deliver_password_reset_instructions)
-      controller.stubs(:require_no_user).returns(true)
-    end
-
-    context "with user not found" do
-      setup do
-        User.stubs(:find_by_email).returns(nil)
-        post :create, :email => "foo@example.com"
-      end
-
-      should_respond_with :success
-      should_set_the_flash_to "No user was found with that email address"
-      should_render_template :new
-    end
-    
-    context "with user found" do
-      setup do
-        @user = User.generate!(:email => "foo@example.com")
-        post :create, :email => "foo@example.com"
-      end
-      
-      should_respond_with :redirect
-      should_set_the_flash_to "Instructions to reset your password have been emailed to you. " +
-        "Please check your email."
-      should_redirect_to("the home page") { root_url }
-    end
-  end
-
-  context "on GET to :edit" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @user = User.generate!
-      User.stubs(:find_using_perishable_token).returns(@user)
-      get :edit, :id => "the token"
-    end
-    
-    should_assign_to(:page_title) { "Select a New Password" }
-    should_respond_with :success
-    should_render_template :edit
-    should_not_set_the_flash
-  end
-
-  context "on PUT to :update" do
-    setup do
-      controller.stubs(:require_no_user).returns(true)
-      @user = User.generate!
-      User.stubs(:find_using_perishable_token).returns(@user)
-    end
-    
-    context "with successful save" do
-      setup do
-        User.any_instance.stubs(:save).returns(true)
-        put :update, :id => "the token", :user => {:password => "the new password", :password_confirmation => "the new password"}
-      end
-
-      should_respond_with :redirect
-      should_set_the_flash_to "Password successfully updated"
-      should_redirect_to("the user's page") { account_url }
-    end
-    
-    context "with failed save" do
-      setup do
-        User.any_instance.stubs(:save).returns(false)
-        put :update, :id => "the token", :user => {:password => "the new password", :password_confirmation => "the new password"}
-      end
-
-      should_respond_with :success
-      should_not_set_the_flash
-      should_render_template :edit
-    end
-  end
-end
-END
-
-file 'test/integration/new_user_can_register_test.rb', <<-END
-require File.join(File.dirname(__FILE__), '..', 'test_helper')
-
-class NewUserCanRegisterTest < ActionController::IntegrationTest
-  context 'a site visitor' do
-    
-    should 'be able to create a new account' do
-      visit root_path
-      click_link 'Register'
-      
-      assert_equal new_account_path, path
-      assert_contain 'Register'
-      
-      fill_in 'First Name', :with => "Francis"
-      fill_in 'Last Name', :with => "Ferdinand"
-      fill_in 'Login', :with => 'francis'
-      fill_in 'Email', :with => 'francis@example.com'
-      fill_in 'Password', :with => 'spambot'
-      fill_in 'Password Confirmation', :with => 'spambot'
-      click_button 'Register'
-      
-      assert_equal root_path, path
-      assert_contain 'Account registered!'
-    end
-  end
-end
-END
-
-file 'test/integration/user_can_login_test.rb', <<-END
-require File.join(File.dirname(__FILE__), '..', 'test_helper')
-
-class UserCanLoginTest < ActionController::IntegrationTest
-
-  context 'an existing user' do
-    setup do
-      @user = User.generate!
-    end
-    
-    should 'be able to login with valid id and password' do
-      visit login_path
-      
-      fill_in 'Login', :with => @user.login
-      fill_in 'Password', :with => @user.password
-
-      click_button 'Login'
-
-      assert_equal '/', path
-      assert_contain "Login successful!"
-    end
-  end
-end
-END
-
-file 'test/integration/user_can_logout_test.rb', <<-END
-require File.join(File.dirname(__FILE__), '..', 'test_helper')
-
-class UserCanLogoutTest < ActionController::IntegrationTest
-
-  context 'a logged-in user' do
-    setup do
-      @user = User.generate!
-      visit login_path
-      fill_in 'Login', :with => @user.login
-      fill_in 'Password', :with => @user.password
-      click_button 'Login'
-    end
-    
-    should 'be able to log out' do
-      visit root_path
-      
-      click_link "Logout"
-
-      assert_equal new_user_session_path, path
-      assert_contain "Logout successful!"
-    end
-  end
-end
-END
 
 commit_state "basic tests"
 
@@ -3220,19 +2195,15 @@ External Services
 
 Testing Tools
 =============
-- Shoulda and Test::Unit for testing
-- Mocha for mocking
-- Object Daddy for factories
-- Generated code is already covered by tests
-- parallel-specs for faster testing. 
-    rake parallel:prepare[2] to set up two test databases (already done)
-    rake test:parallel[2] to distribute tests across two cores
-    rake -T parallel to see more - RSpec and Cucumber are also supported
-- rack-bug for request/response/perf analysis. http://localhost:3000/__rack_bug__/bookmarklet.html to add bookmarklet to browser.
-- shmacros for additional Shoulda macros
-    should_accept_nested_attributes_for, should_act_as_taggable_on, should_callback, should_delegate, more
-- More extra shoulda macros:
-    should_have_before_filter, should_have_after_filter
+- RSpec for testing
+- Factory Girl for factories
+- Generated code is already covered by tests. Er, it will be soon.
+- # parallel-specs for faster testing. 
+#     rake parallel:prepare[2] to set up two test databases (already done)
+#     rake test:parallel[2] to distribute tests across two cores
+#     rake -T parallel to see more - RSpec and Cucumber are also supported
+- # rack-bug for request/response/perf analysis. http://localhost:3000/__rack_bug__/bookmarklet.html to add bookmarklet to browser.
+- Remarkable for additional matchers
 - metric-fu for static code analysis. rake metrics:all, configure in Rakefile
 - inaction-mailer is installed for development environment, so mails sent during dev will end up as files in /tmp/sent_mails
   Get rid of all sent mail files with rake mail:clear
@@ -3348,6 +2319,7 @@ if monitoring == "scout"
 end
 puts '  Put the production database password in config/database.yml'
 puts '  Put mail server information in mail.rb'
+puts '  Put exception notifier addresses in notifications.rb'
 puts '  Put real IP address and git repo URL in deployment files'
 puts '  Add app to gitosis config'
 puts "  git remote add origin git@#{capistrano_repo_host}:#{current_app_name}.git"
